@@ -3128,9 +3128,11 @@ void bus_register_handlers(wifi_ctrl_t *ctrl)
                                 { WIFI_STA_SELFHEAL_CONNECTION_TIMEOUT, bus_element_type_event,
                                     { get_sta_connection_timeout, NULL, NULL, NULL, NULL, NULL}, slow_speed, ZERO_TABLE,
                                     { bus_data_type_boolean, false, 0, 0, 0, NULL } },
+#if 0
                                 { WIFI_ACCESSPOINT_TABLE, bus_element_type_table,
                                     { NULL, NULL, ap_table_addrowhandler, ap_table_removerowhandler,NULL, NULL}, slow_speed, num_of_vaps,
                                     { bus_data_type_object, false, 0, 0, 0, NULL } },
+#endif
                                 { WIFI_ACCESSPOINT_DEV_CONNECTED, bus_element_type_event,
                                     { NULL, NULL, NULL, NULL, eventSubHandler, NULL}, slow_speed, ZERO_TABLE,
                                     { bus_data_type_string, false, 0, 0, 0, NULL } },
