@@ -1556,6 +1556,7 @@ webconfig_error_t translate_em_common_to_sta_info_common(wifi_vap_info_t *vap, c
     
     //Copy Passphrase
     strncpy(vap->u.sta_info.security.u.key.key, vap_row->mesh_sta_passphrase, sizeof(vap->u.sta_info.security.u.key.key));
+    memset(vap->u.sta_info.security.key_id, 0, sizeof(vap->u.sta_info.security.key_id));
     
     return webconfig_error_none;
 }
@@ -1847,6 +1848,7 @@ webconfig_error_t translate_from_easymesh_bssinfo_to_vap_per_radio(webconfig_sub
                     vap->u.bss_info.security.mode = radio_config->authtype[k];
                     strncpy(vap->u.bss_info.ssid, radio_config->ssid[k], sizeof(vap->u.bss_info.ssid)-1);
                     strncpy(vap->u.bss_info.security.u.key.key, radio_config->password[k], sizeof(vap->u.bss_info.security.u.key.key)-1);
+                    memset(vap->u.bss_info.security.key_id, 0, sizeof(vap->u.bss_info.security.key_id));
                     vap->u.bss_info.enabled = radio_config->enable[k];
                 }
             }
@@ -2056,6 +2058,7 @@ webconfig_error_t translate_from_easymesh_bssinfo_to_vap_object(webconfig_subdoc
                         vap->u.bss_info.security.mode = radio_config->authtype[k];
                         strncpy(vap->u.bss_info.ssid, radio_config->ssid[k], sizeof(vap->u.bss_info.ssid)-1);
                         strncpy(vap->u.bss_info.security.u.key.key, radio_config->password[k], sizeof(vap->u.bss_info.security.u.key.key)-1);
+                        memset(vap->u.bss_info.security.key_id, 0, sizeof(vap->u.bss_info.security.key_id));
                         vap->u.bss_info.enabled = radio_config->enable[k];
                     }
                 }

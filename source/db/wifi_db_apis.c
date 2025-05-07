@@ -6565,6 +6565,7 @@ int wifidb_init_vap_config_default(int vap_index, wifi_vap_info_t *config,
             strncpy(cfg.u.sta_info.security.u.key.key, INVALID_KEY, sizeof(cfg.u.sta_info.security.u.key.key));
         }
 
+        memset(cfg.u.sta_info.security.key_id, 0, sizeof(cfg.u.sta_info.security.key_id));
         cfg.u.sta_info.scan_params.channel.band = band;
 
         switch(band) {
@@ -6787,6 +6788,7 @@ int wifidb_init_vap_config_default(int vap_index, wifi_vap_info_t *config,
             strcpy(cfg.u.bss_info.security.u.key.key, INVALID_KEY);
         }
 
+        memset(cfg.u.bss_info.security.key_id, 0, sizeof(cfg.u.bss_info.security.key_id));
         if (isVapLnfSecure(vap_index)) {
             cfg.u.bss_info.enabled = true;
             cfg.u.bss_info.security.mfp = wifi_mfp_cfg_disabled;
