@@ -1128,6 +1128,7 @@ int main(int argc, char *argv[])
             goto exit;
         }
     }
+    printf("sample app csi subscription ID:%d\r\n", g_csi_index);
 
     if (g_sub_total > 0) {
         g_all_subs = malloc(sizeof(rbusEventSubscription_t) * g_sub_total);
