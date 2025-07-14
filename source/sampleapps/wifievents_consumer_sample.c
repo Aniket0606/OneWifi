@@ -48,6 +48,11 @@
 #define WIFI_EVENT_CONSUMER_DGB(msg, ...) \
     wifievents_consumer_dbg_print("%s:%d  " msg "\n", __func__, __LINE__, ##__VA_ARGS__);
 
+#define WIFI_SAMPLE_DUMP(msg, ...) \
+     wifi_sample_dump_func(msg, ##__VA_ARGS__);
+
+FILE *sample_dump_fptr = NULL;
+
 typedef struct csi_data_json_obj {
     cJSON *main_json_obj;
     cJSON *json_csi_obj;
@@ -351,6 +356,35 @@ static void csiMacListHandler(rbusHandle_t handle, rbusEvent_t const *event,
     UNREFERENCED_PARAMETER(handle);
 }
 
+static void wifi_sample_dump_func(char *format, ...)
+{
+    va_list list;
+
+    if (g_num_of_samples == -1) {
+        return;
+    }
+
+#ifdef LINUX_VM_PORT
+    va_start(list, format);
+    vprintf(format, list);
+    va_end(list);
+#else
+    if (sample_dump_fptr == NULL) {
+        sample_dump_fptr = fopen("/tmp/csi_samples.txt", "a+");
+        if (sample_dump_fptr == NULL) {
+            printf("Failed to open file\n");
+            return;
+        }
+    }
+
+    va_start(list, format);
+    vfprintf(sample_dump_fptr, format, list);
+    va_end(list);
+    fflush(sample_dump_fptr);
+#endif
+    return;
+}
+
 void json_add_wifi_csi_frame_info(cJSON *sta_obj, wifi_frame_info_t *frame_info)
 {
     cJSON *obj_array, *number_item;
@@ -593,6 +627,39 @@ void rotate_and_write_CSIData(mac_address_t sta_mac, wifi_csi_data_t *csi)
 
     csi_data_in_json_format(sta_mac, csi);
 
+    //sc = subcarriers; nr = antennas; nc = stream;
+    unsigned int sc_count, nr_count, nc_count;
+#if 0
+    WIFI_SAMPLE_DUMP("\ncsi_matrix : \n");
+    for (sc_count = 0; sc_count < csi->frame_info.num_sc; sc_count++) {
+        WIFI_SAMPLE_DUMP("Subcarrier-%u:\n", sc_count);
+        WIFI_SAMPLE_DUMP("       ");
+        for (nc_count = 0; nc_count < csi->frame_info.Nc; nc_count++) {
+            WIFI_SAMPLE_DUMP("|Stream-%-7u|", nc_count);
+        }
+        WIFI_SAMPLE_DUMP("\n");
+
+        for (nr_count = 0; nr_count < csi->frame_info.Nr; nr_count++) {
+            WIFI_SAMPLE_DUMP("Ant-%02u | ", nr_count);
+            for (nc_count = 0; nc_count < csi->frame_info.Nc; nc_count++) {
+                WIFI_SAMPLE_DUMP( "0x%04x/0x%04x ", (((csi->csi_matrix[sc_count][nr_count][nc_count])>>16) & 0xFFFF),  ((csi->csi_matrix[sc_count][nr_count][nc_count]) & 0xFFFF));
+            }
+            WIFI_SAMPLE_DUMP("\n");
+        }
+        WIFI_SAMPLE_DUMP("\n");
+    }
+#else
+    WIFI_SAMPLE_DUMP("\ncsi_matrix : ");
+    for (sc_count = 0; sc_count < csi->frame_info.num_sc; sc_count++) {
+        for (nr_count = 0; nr_count < csi->frame_info.Nr; nr_count++) {
+            for (nc_count = 0; nc_count < csi->frame_info.Nc; nc_count++) {
+                WIFI_SAMPLE_DUMP( "%d ", csi->csi_matrix[sc_count][nr_count][nc_count]);
+            }
+        }
+    }
+#endif
+    WIFI_SAMPLE_DUMP("\n");
+
     WIFI_EVENT_CONSUMER_DGB("Exit %s: %d\n", __FUNCTION__, __LINE__);
 }
 
@@ -622,11 +689,14 @@ static void print_csi_data(char *buffer)
     memcpy(csilabel, data_ptr, 4);
     data_ptr = data_ptr + 4;
     WIFI_EVENT_CONSUMER_DGB("%s\n", csilabel);
+    WIFI_SAMPLE_DUMP("\n==========================================================\n");
+    WIFI_SAMPLE_DUMP( "sample num : %d %s\n", g_sample_counter, csilabel);
 
     // Total length:  <length of this entire data field as an unsigned int>
     memcpy(&total_length, data_ptr, sizeof(unsigned int));
     data_ptr = data_ptr + sizeof(unsigned int);
     WIFI_EVENT_CONSUMER_DGB("total_length %u\n", total_length);
+    WIFI_SAMPLE_DUMP("total_length %u\n", total_length);
 
     // DataTimeStamp:  <date-time, number of seconds since the Epoch>
     memcpy(&datetime, data_ptr, sizeof(time_t));
@@ -634,11 +704,13 @@ static void print_csi_data(char *buffer)
     memset(buf, 0, sizeof(buf));
     ctime_r(&datetime, buf);
     WIFI_EVENT_CONSUMER_DGB("datetime %s\n", buf);
+    WIFI_SAMPLE_DUMP("datetime %s\n", buf);
 
     // NumberOfClients:  <unsigned int number of client devices>
     memcpy(&num_csi_clients, data_ptr, sizeof(unsigned int));
     data_ptr = data_ptr + sizeof(unsigned int);
     WIFI_EVENT_CONSUMER_DGB("num_csi_clients %u\n", num_csi_clients);
+    WIFI_SAMPLE_DUMP("num_csi_clients %u\n", num_csi_clients);
 
     // clientMacAddress:  <client mac address>
     memcpy(&sta_mac, data_ptr, sizeof(mac_address_t));
@@ -646,14 +718,24 @@ static void print_csi_data(char *buffer)
     WIFI_EVENT_CONSUMER_DGB("==========================================================");
     WIFI_EVENT_CONSUMER_DGB("MAC %02x%02x%02x%02x%02x%02x\n", sta_mac[0], sta_mac[1], sta_mac[2],
         sta_mac[3], sta_mac[4], sta_mac[5]);
+    WIFI_SAMPLE_DUMP("MAC %02x%02x%02x%02x%02x%02x\n", sta_mac[0], sta_mac[1], sta_mac[2],
+        sta_mac[3], sta_mac[4], sta_mac[5]);
 
     // length of client CSI data:  <size of the next field in bytes>
     memcpy(&csi_data_length, data_ptr, sizeof(unsigned int));
     data_ptr = data_ptr + sizeof(unsigned int);
     WIFI_EVENT_CONSUMER_DGB("csi_data_length %u\n", csi_data_length);
+    WIFI_SAMPLE_DUMP("csi_data_length %u\n", csi_data_length);
 
     //<client device CSI data>
     memcpy(&csi, data_ptr, sizeof(wifi_csi_data_t));
+
+    WIFI_SAMPLE_DUMP("bw_mode %d, mcs %d, Nr %d, Nc %d, valid_mask %hu, phy_bw %hu, cap_bw "
+                            "%hu, num_sc %hu, decimation %d, channel %d, cfo %d, time_stamp %llu",
+        csi.frame_info.bw_mode, csi.frame_info.mcs, csi.frame_info.Nr, csi.frame_info.Nc,
+        csi.frame_info.valid_mask, csi.frame_info.phy_bw, csi.frame_info.cap_bw,
+        csi.frame_info.num_sc, csi.frame_info.decimation, csi.frame_info.channel,
+        csi.frame_info.cfo, csi.frame_info.time_stamp);
 
     // Writing the CSI data to /tmp/CSI.bin
     rotate_and_write_CSIData(sta_mac, &csi);
@@ -668,10 +750,13 @@ static void print_csi_data(char *buffer)
 
     // Printing rssii
     WIFI_EVENT_CONSUMER_DGB("rssi values on each Nr are");
+    WIFI_SAMPLE_DUMP("rssi values on each Nr are : ");
     for (itr = 0; itr < csi.frame_info.Nr; itr++) {
         WIFI_EVENT_CONSUMER_DGB("%d...", csi.frame_info.nr_rssi[itr]);
+        WIFI_SAMPLE_DUMP("%d ", csi.frame_info.nr_rssi[itr]);
     }
     WIFI_EVENT_CONSUMER_DGB("==========================================================");
+    WIFI_SAMPLE_DUMP("\n==========================================================\n");
     return;
 }
 
@@ -1292,6 +1377,8 @@ int main(int argc, char *argv[])
                                 printf("collected samples : %d, exiting program\n",
                                     g_sample_counter);
                                 save_json_data_to_file();
+                                fclose(sample_dump_fptr);
+                                sample_dump_fptr = NULL;
                                 goto exit2;
                             }
                         }
