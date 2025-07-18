@@ -29,7 +29,9 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <unistd.h>
+
 #define MAX_EVENT_NAME_SIZE 200
+#define ARRAY_SZ(x) (sizeof(x) / sizeof((x)[0]))
 
 static int get_subdoc_type(wifi_provider_response_t *response, webconfig_subdoc_type_t *subdoc,
     char *eventName)
@@ -3086,6 +3088,111 @@ bus_error_t set_force_vap_apply(char *name, raw_data_t *p_data, bus_user_data_t 
     wifi_util_error_print(WIFI_CTRL, "%s:%d Invalid name : %s\r\n", __func__, __LINE__, name);
 
     return bus_error_invalid_input;
+}
+
+static uint32_t ssid_vap_index = 0;
+
+rbusError_t rbus_ssid_table_add_row_handler(rbusHandle_t handle, char const* tableName, char const* aliasName, uint32_t *instNum)
+{
+    *instNum = ++ssid_vap_index;
+    wifi_util_info_print(WIFI_CTRL, "%s():%d handler triggered:%s - %d\n",
+        __func__, __LINE__, tableName, ssid_vap_index);
+    return RBUS_ERROR_SUCCESS;
+}
+
+rbusError_t rbus_ssid_table_remove_row_handler(rbusHandle_t handle, char const *rowName)
+{
+    ssid_vap_index--;
+    wifi_util_info_print(WIFI_CTRL, "%s():%d handler triggered %s - %d\n",
+        __func__, __LINE__, rowName, ssid_vap_index);
+    return RBUS_ERROR_SUCCESS;
+}
+
+rbusError_t rbus_ssid_get_handler(rbusHandle_t handle, rbusProperty_t property, rbusGetHandlerOptions_t* options)
+{
+    wifi_util_info_print(WIFI_CTRL, "%s():%d handler triggered\n", __func__, __LINE__);
+    return RBUS_ERROR_SUCCESS;
+}
+
+rbusError_t rbus_ssid_set_handler(rbusHandle_t handle, rbusProperty_t property, rbusSetHandlerOptions_t* options)
+{
+    wifi_util_info_print(WIFI_CTRL, "%s():%d handler triggered\n", __func__, __LINE__);
+    return RBUS_ERROR_SUCCESS;
+}
+
+rbusError_t rbus_ssid_get_method_handler(rbusHandle_t handle, rbusProperty_t property, rbusGetHandlerOptions_t* options)
+{
+    char const *name = rbusProperty_GetName(property);
+
+    wifi_util_info_print(WIFI_CTRL, "%s():%d handler triggered\n", __func__, __LINE__);
+    if (!strcmp(name, "Device.WiFi.DataElements.Network.SetSSID.Input.AddRemoveChange.Change")) {
+        //Add code logic here
+    } else if (!strcmp(name,
+        "Device.WiFi.DataElements.Network.SetSSID.Input.AddRemoveChange.Remove")) {
+
+    } else if (!strcmp(name,
+        "Device.WiFi.DataElements.Network.SetSSID.Input.AddRemoveChange.Add")) {
+
+    }
+
+    return RBUS_ERROR_SUCCESS;
+}
+
+rbusError_t rbus_ssid_set_method_handler(rbusHandle_t handle, rbusProperty_t property, rbusSetHandlerOptions_t* options)
+{
+    char const *name = rbusProperty_GetName(property);
+
+    wifi_util_info_print(WIFI_CTRL, "%s():%d handler triggered\n", __func__, __LINE__);
+    if (!strcmp(name, "Device.WiFi.DataElements.Network.SetSSID.Input.AddRemoveChange.Change")) {
+        //Add code logic here
+        //Change Private_vap ssid value and apply to db and hal
+    } else if (!strcmp(name,
+        "Device.WiFi.DataElements.Network.SetSSID.Input.AddRemoveChange.Remove")) {
+
+    } else if (!strcmp(name,
+        "Device.WiFi.DataElements.Network.SetSSID.Input.AddRemoveChange.Add")) {
+
+    }
+    return RBUS_ERROR_SUCCESS;
+}
+
+int jrpc_demo_wfa_data_model_init(wifi_ctrl_t *ctrl)
+{
+    rbusError_t rc = RBUS_ERROR_SUCCESS;
+    const char *component_name = "JRPC_demo"
+
+    rbusDataElement_t rbus_data_elem[] = {
+        { "Device.WiFi.DataElements.Network.SSID.{i}.", RBUS_ELEMENT_TYPE_METHOD,
+            { NULL, NULL, rbus_ssid_table_add_row_handler,
+                rbus_ssid_table_remove_row_handler, NULL, NULL }},
+        { "Device.WiFi.DataElements.Network.SSID.{i}.SSID", RBUS_ELEMENT_TYPE_METHOD,
+            { rbus_ssid_get_handler, rbus_ssid_set_handler, NULL, NULL, NULL, NULL }},
+        { "Device.WiFi.DataElements.Network.SetSSID()", RBUS_ELEMENT_TYPE_METHOD,
+            { rbus_ssid_get_method_handler, rbus_ssid_set_method_handler, NULL, NULL, NULL, NULL }}
+    };
+
+    rc = rbus_open(&ctrl->rbus_handle, component_name);
+    if (rc != RBUS_ERROR_SUCCESS) {
+        wifi_util_error_print(WIFI_CTRL, "%s:%d: bus: rbus_open() failed:%d, component:%s\n",
+        __func__, __LINE__, rc, component_name);
+        return RETURN_ERR;
+    } else {
+        wifi_util_info_print(WIFI_CTRL, "%s:%d: bus: rbus_open is successful"
+            " for component:%s handle:%p\n", __func__, __LINE__,
+            component_name, ctrl->rbus_handle);
+    }
+
+    rc = rbus_regDataElements(ctrl->rbus_handle, ARRAY_SZ(rbus_data_elem), rbus_data_elem);
+    if (rc != RBUS_ERROR_SUCCESS) {
+        wifi_util_error_print(WIFI_CTRL, "%s:%d: bus: rbus_regDataElements failed rc:%d\n", __func__, __LINE__, rc);
+    } else {
+        for (uint32_t index = 1; index <= getTotalNumberVAPs(); index++) {
+            rc = rbusTable_addRow(ctrl->rbus_handle, "Device.WiFi.DataElements.Network.SSID.", NULL, NULL);
+            if (rc != RBUS_ERROR_SUCCESS) {
+                wifi_util_info_print(WIFI_CTRL, "%s():%d rbusTable_addRow failed:%d\n", __func__, __LINE__, rc);
+            }
+        }
+    }
 }
 
 void bus_register_handlers(wifi_ctrl_t *ctrl)

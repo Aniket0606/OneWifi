@@ -264,6 +264,7 @@ typedef struct wifi_ctrl {
     int                 speed_test_running;
     events_bus_data_t   events_bus_data;
     hotspot_cfg_sem_param_t hotspot_sem_param;
+    rbusHandle_t rbus_handle;
 } wifi_ctrl_t;
 
 
