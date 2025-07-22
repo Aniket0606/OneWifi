@@ -119,6 +119,118 @@ static int add_str_mac_addr(char *total_mac, const char *str_mac)
     return RETURN_OK;
 }
 
+static int remove_str_mac_addr(char *total_mac, const char *str_mac)
+{
+    char temp_str_mac[MAX_MACLIST_SIZE] = { 0 };
+
+    snprintf(temp_str_mac, MAX_MACLIST_SIZE, "%s", total_mac);
+
+    char *str_mac_token = strtok(temp_str_mac, ",");
+    char total_str_mac[MAX_MACLIST_SIZE] = { 0 };
+
+    while(str_mac_token != NULL) {
+        if (strcmp(str_mac_token, str_mac) != 0) {
+            if (add_str_mac_addr(total_str_mac, str_mac_token) != RETURN_OK) {
+                break;
+            }
+        }
+        str_mac_token = strtok(NULL, ",");
+    }
+    snprintf(total_mac, MAX_MACLIST_SIZE, "%s", total_str_mac);
+
+    return RETURN_OK;
+}
+
+static int publish_csi_covariance_data(bus_handle_t *handle, uint8_t *data, uint32_t data_len)
+{
+    int rc;
+    raw_data_t data;
+    memset(&data, 0, sizeof(raw_data_t));
+
+    data.data_type = bus_data_type_bytes;
+    data.raw_data.bytes = (void *)data;
+    data.raw_data_len = data_len;
+
+    rc = get_bus_descriptor()->bus_event_publish_fn(handle, EM_CSI_COVARIANT_DATA, &data);
+    if (rc != bus_error_success) {
+        wifi_util_error_print(WIFI_APPS, "%s:%d: bus_event_publish_fn Event failed %d\n", __func__, __LINE__, rc);
+        return RETURN_ERR;
+    } else {
+        wifi_util_dbg_print(WIFI_APPS, "%s:%d: bus publish Event\n", __func__, __LINE__);
+    }
+
+    return RETURN_OK;
+}
+
+int generate_covariance_value(csi_data_container_t *csi_data)
+{
+    uint32_t i, j, carrier = 0;
+    wifi_csi_data_t *p_hal_csi;
+    matrix_t in, out;
+
+    //Add row and colums validation later
+
+    // create an array of Nr x Samples with the one frequency subcarrier
+    in.cols = csi_data->num_samples;
+
+    for (j = 0; j < in.cols; j++) {
+        p_hal_csi = &csi_data->csi_elems[j];
+        in.rows = p_hal_csi->frame_info.Nr;
+        
+        for (i = 0; i < in.rows; i++) {
+            in.val[i][j].re = (double)p_hal_csi->csi_matrix[carrier][i][j].re;
+            in.val[i][j].im = (double)p_hal_csi->csi_matrix[carrier][i][j].im;
+        }
+    }
+
+    //print_matrix(&in);
+
+    if (covariance(&out, &in) != 0) {
+        wifi_util_error_print(WIFI_APPS, "%s:%d Failed to create covariance matrix\n",
+            __func__, __LINE__);
+        return RETURN_ERR;
+    }
+
+    //print_matrix(&out);
+
+    for (j = 0; j < out.cols; j++) {
+        for (i = 0; i < out.rows; i++) {
+            csi_data->covariant.val[i][j].re = out.val[i][j].re;
+            csi_data->covariant.val[i][j].im = out.val[i][j].im;
+        }
+    }
+
+    return RETURN_OK;
+}
+
+void process_csi_container_data(wifi_app_t *p_app, wifi_csi_data_t *hal_csi,
+    csi_data_container_t *csi_data)
+{
+    //Add null check later
+
+    uint8_t csi_data_index;
+
+    if (csi_data->cur_csi_elem_index >= MAX_CSI_SAMPLES) {
+        csi_data->cur_csi_elem_index = 0;
+    }
+    csi_data_index = csi_data->cur_csi_elem_index++;
+    memcpy(&csi_data->csi_elems[csi_data_index], hal_csi,
+        sizeof(wifi_csi_data_t));
+    if (csi_data->num_samples >= MAX_CSI_SAMPLES) {
+        if (generate_covariance_value(csi_data) == RETURN_OK) {
+            //Send covariance_data to bus
+
+            publish_csi_covariance_data(&p_app->handle, (uint8_t *)&csi_data->covariant,
+                sizeof(csi_covariant_data_t));
+        }
+
+        //we will make it configurable through nvram config later.
+        csi_data->num_samples -= 2;
+    } else {
+        csi_data->num_samples++;
+    }
+}
+
 void process_csi_analytics_data(wifi_app_t *p_app, wifi_csi_dev_t *csi_dev_data)
 {
     csi_analytics_info_t *p_info = &p_app->data.u.csi_analytics;
@@ -149,6 +261,8 @@ void process_csi_analytics_data(wifi_app_t *p_app, wifi_csi_dev_t *csi_dev_data)
         csi_info->num_sc = csi_dev_data->csi.frame_info.num_sc;
         csi_info->decimation = csi_dev_data->csi.frame_info.decimation;
         csi_info->skip_mismatch_data_num = 0;
+        process_csi_container_data(p_app, &csi_dev_data->csi,
+            &csi_info->csi_container);
         MUTEX_LOCK(p_info->maclist_lock);
         if (add_str_mac_addr(p_info->sta_mac, mac_str) == RETURN_OK) {
             set_bus_csi_sta_maclist(&p_app->handle, p_info);
@@ -157,6 +271,7 @@ void process_csi_analytics_data(wifi_app_t *p_app, wifi_csi_dev_t *csi_dev_data)
         return;
     }
 
+    process_csi_container_data(p_app, &csi_dev_data->csi, &csi_info->csi_container);
     is_csi_data_mismatch = ((csi_info->num_sc != csi_dev_data->csi.frame_info.num_sc) ||
         (csi_info->decimation != csi_dev_data->csi.frame_info.decimation));
 
@@ -244,8 +359,18 @@ static int webconfig_hal_csi_data_apply(wifi_app_t *apps, webconfig_subdoc_decod
             if (new_csi_data->csi_session_num == csi_info->csi_session_index) {
                 wifi_util_dbg_print(WIFI_APPS,
                     "%s:%d csi own session index:%d"
-                    " index:%d\n",
-                    __func__, __LINE__, csi_info->csi_session_index, index);
+                    " index:%d em maclist:%s\n",
+                    __func__, __LINE__, csi_info->csi_session_index,
+                    index, csi_info->em_sta_mac);
+                for (s_index = 0; s_index < new_csi_data->csi_client_count; s_index++) {
+                    memset(mac_str, 0, MAX_MAC_STR_SIZE);
+                    to_mac_str(new_csi_data->csi_client_list[s_index], mac_str);
+                    if (mac_exists_in_list(csi_info->em_sta_mac, mac_str) != NULL) {
+                        if (add_str_mac_addr(total_str_mac, mac_str) != RETURN_OK) {
+                            break;
+                        }
+                    }
+                }
             } else if (new_csi_data->enabled == false) {
                 wifi_util_dbg_print(WIFI_APPS,
                     "%s:%d csi not enabled for"
@@ -306,11 +431,78 @@ int csi_analytics_webconfig_events(wifi_app_t *apps, wifi_event_subtype_t sub_ty
     return RETURN_OK;
 }
 
+int add_remove_em_maclist_entry(wifi_app_t *p_app, char *str_mac, bool is_add)
+{
+    csi_analytics_info_t *p_info = &p_app->data.u.csi_analytics;
+
+    if (is_add == true) {
+        if (add_str_mac_addr(p_info->sta_mac, str_mac) == RETURN_OK) {
+            add_str_mac_addr(p_info->em_sta_mac, str_mac);
+            set_bus_csi_sta_maclist(&p_app->handle, p_info);
+        }
+    } else {
+        remove_str_mac_addr(p_info->sta_mac, str_mac);
+        remove_str_mac_addr(p_info->em_sta_mac, str_mac);
+        set_bus_csi_sta_maclist(&p_app->handle, p_info);
+    }
+}
+
+void csi_analytics_assoc_event(wifi_app_t *apps, void *data)
+{   
+    if (data == NULL) {
+        wifi_util_error_print(WIFI_APPS,"%s:%d NULL Pointer \n", __func__, __LINE__);
+        return;
+    }
+    
+    assoc_dev_data_t *assoc_data = (assoc_dev_data_t *) data;
+    mac_addr_str_t mac_str;
+
+    to_mac_str(assoc_data->dev_stats.cli_MACAddress, mac_str);
+    add_remove_em_maclist_entry(apps, mac_str, true);
+}
+
+void csi_analytics_disassoc_event(wifi_app_t *apps, void *data)
+{
+    if (data == NULL) {
+        wifi_util_error_print(WIFI_APPS,"%s:%d NULL Pointer \n", __func__, __LINE__);
+        return;
+    }
+
+    assoc_dev_data_t *assoc_data = (assoc_dev_data_t *) data;
+    mac_addr_str_t mac_str;
+
+    to_mac_str(assoc_data->dev_stats.cli_MACAddress, mac_str);
+    add_remove_em_maclist_entry(apps, mac_str, false);
+}
+
+int csi_analytics_hal_events(wifi_app_t *app, wifi_event_subtype_t sub_type, void *data)
+{
+    switch (sub_type) {
+    case wifi_event_hal_assoc_device:
+        wifi_util_dbg_print(WIFI_APPS, "%s:%d Got Assoc device for Levl\n", __func__, __LINE__);
+        csi_analytics_assoc_event(app, data);
+        break;
+    case wifi_event_hal_disassoc_device:
+        wifi_util_dbg_print(WIFI_APPS, "%s:%d Got DisAssoc device for Levl\n", __func__, __LINE__);
+        csi_analytics_disassoc_event(app, data);
+        break;
+    default:
+        wifi_util_dbg_print(WIFI_APPS, "%s:%d app sub_event:%s not handle\r\n", __func__, __LINE__,
+            wifi_event_subtype_to_string(sub_type));
+        break;
+    }
+    return RETURN_OK;
+}
+
 int csi_analytics_event(wifi_app_t *app, wifi_event_t *event)
 {
     switch (event->event_type) {
     case wifi_event_type_webconfig:
         csi_analytics_webconfig_events(app, event->sub_type, event->u.webconfig_data);
+        break;
+    case wifi_event_type_hal_ind:
+        csi_analytics_hal_events(app, event->sub_type, event->u.core_data.msg);
+        break;
     default:
         break;
     }
@@ -532,6 +724,114 @@ bus_error_t csi_analytics_bus_subscription(bus_handle_t *bus_handle, bus_event_s
     return rc;
 }
 
+bus_error_t em_get_maclist(char *name, raw_data_t *p_data, bus_user_data_t *user_data)
+{
+    wifi_app_t *p_app = get_wifi_app_obj(wifi_app_inst_csi_analytics);
+    if (p_app == NULL) {
+        wifi_util_error_print(WIFI_APPS, "%s:%d: app obj not found\n", __func__,
+                __LINE__);
+        return bus_error_not_inttialized;
+    }
+    csi_analytics_info_t *csi_info = &p_app->data.u.csi_analytics;
+
+    uint32_t str_len = strlen(csi_info->em_sta_mac) + 1;
+    p_data->data_type = bus_data_type_string;
+    p_data->raw_data.bytes = malloc(str_len);
+    if (p_data->raw_data.bytes == NULL) {
+        wifi_util_error_print(WIFI_CTRL,"%s:%d memory allocation is failed:%d\r\n",__func__,
+            __LINE__, str_len);
+        return bus_error_out_of_resources;
+    }
+    strncpy((char *)p_data->raw_data.bytes, csi_info->em_sta_mac, str_len);
+    p_data->raw_data_len = str_len;
+
+    return bus_error_success;
+}
+
+bus_error_t em_set_maclist(char *name, raw_data_t *p_data, bus_user_data_t *user_data)
+{
+    wifi_app_t *p_app = get_wifi_app_obj(wifi_app_inst_csi_analytics);
+    if (p_app == NULL) {
+        wifi_util_error_print(WIFI_APPS, "%s:%d: app obj not found\n", __func__,
+                __LINE__);
+        return bus_error_not_inttialized;
+    }
+    csi_analytics_info_t *csi_info = &p_app->data.u.csi_analytics;
+
+    if ((p_data->raw_data.bytes != NULL) &&
+        (p_data->data_type == bus_data_type_string)) {
+        strncpy(csi_info->em_sta_mac, (char *)p_data->raw_data.bytes, p_data->raw_data_len);
+        wifi_util_info_print(WIFI_APPS, "%s:%d: set em maclist:%s\n", __func__,
+                __LINE__, csi_info->em_sta_mac);
+    }
+    return bus_error_success;
+}
+
+static void em_maclist_notification(char *event_name, raw_data_t *p_data, void *userData)
+{
+    wifi_app_t *p_app = get_wifi_app_obj(wifi_app_inst_csi_analytics);
+    if (p_app == NULL) {
+        wifi_util_error_print(WIFI_APPS, "%s:%d: app obj not found\n", __func__,
+                __LINE__);
+        return bus_error_not_inttialized;
+    }
+    csi_analytics_info_t *csi_info = &p_app->data.u.csi_analytics;
+
+    if ((p_data->raw_data.bytes != NULL) &&
+        (p_data->data_type == bus_data_type_string)) {
+        wifi_util_info_print(WIFI_APPS, "%s:%d: cfg em maclist:%s\n", __func__,
+                __LINE__, (char *)p_data->raw_data.bytes);
+        char temp_str_mac[MAX_MACLIST_SIZE] = { 0 };
+
+        snprintf(temp_str_mac, MAX_MACLIST_SIZE, "%s", (char *)p_data->raw_data.bytes);
+
+        char *str_mac_token = strtok(temp_str_mac, ",");
+        char total_str_mac[MAX_MACLIST_SIZE] = { 0 };
+
+        snprintf(total_str_mac, MAX_MACLIST_SIZE, "%s", csi_info->em_sta_mac);
+
+        while(str_mac_token != NULL) {
+            if (add_str_mac_addr(total_str_mac, str_mac_token) != RETURN_OK) {
+                break;
+            }
+            str_mac_token = strtok(NULL, ",");
+        }
+        snprintf(csi_info->em_sta_mac, MAX_MACLIST_SIZE, "%s", total_str_mac);
+        wifi_util_info_print(WIFI_APPS, "%s:%d: set em maclist:%s\n", __func__,
+                __LINE__, csi_info->em_sta_mac);
+    }
+}
+
+bus_error_t event_handler(char *event_name, bus_event_sub_action_t action, int32_t interval, bool* autoPublish)
+{
+    wifi_util_info_print(WIFI_APPS,"%s:%d eventHandler called: action=%s\n event_name=%s autoPublish:%d\n",
+            __func__, __LINE__, action == bus_event_action_subscribe ? "subscribe" : "unsubscribe",
+            event_name, *autoPublish);
+    *autoPublish = false;
+    return bus_error_success;
+}
+
+bus_error_t register_em_maclist_name(bus_handle_t *bus_handle)
+{
+    bus_error_t rc = bus_error_success;
+
+    bus_data_element_t data_elements[] = {
+        { EM_MACLIST_NAME, bus_element_type_method,
+        { em_get_maclist, em_set_maclist, NULL, NULL, NULL, NULL }, slow_speed, ZERO_TABLE,
+        { bus_data_type_string, true, 0, 0, 0, NULL } },
+        { EM_CSI_COVARIANT_DATA, bus_element_type_method,
+        { NULL, NULL, NULL, NULL, event_handler, NULL }, slow_speed, ZERO_TABLE,
+        { bus_data_type_bytes, true, 0, 0, 0, NULL } }
+    };
+
+    rc = get_bus_descriptor()->bus_reg_data_element_fn(bus_handle, data_elements,
+        ARRAY_SZ(data_elements));
+    if (rc != bus_error_success) {
+        wifi_util_error_print(WIFI_APPS, "%s:%d bus: bus_regDataElements failed:%d\n", __func__, __LINE__, rc);
+    }
+    return rc;
+}
+
 bus_error_t init_bus_subscription(bus_handle_t *bus_handle, wifi_app_t *p_app)
 {
     char *component_name = "CsiAnanlytics";
@@ -544,6 +844,9 @@ bus_error_t init_bus_subscription(bus_handle_t *bus_handle, wifi_app_t *p_app)
         wifi_util_error_print(WIFI_APPS, "%s:%d bus_open failed: %d\n", __func__, __LINE__, rc);
         return rc;
     }
+
+    //Added this code for temporary purpose we need to move this code on agent side.
+    register_em_maclist_name(bus_handle);
 
     if (p_info->csi_session_index == 0) {
         uint32_t csi_index = 0;
@@ -577,6 +880,16 @@ bus_error_t init_bus_subscription(bus_handle_t *bus_handle, wifi_app_t *p_app)
             return rc;
         }
 
+        bus_event_sub_t bus_sub_map[] = {
+            /* Event Name, filter, interval, duration, handler, user data, handle */
+            { EM_MACLIST_NAME, NULL, 0, 0, em_maclist_notification, NULL, NULL, NULL,
+             false }
+        };
+
+        rc = csi_analytics_bus_subscription(bus_handle, bus_sub_map, ARRAY_SZ(bus_sub_map));
+        if (rc != bus_error_success) {
+            return rc;
+        }
         p_info->csi_session_index = csi_index;
         run_csi_enable_timer(p_app, true);
     }

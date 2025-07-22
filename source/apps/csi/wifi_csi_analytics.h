@@ -3,6 +3,7 @@
 
 #include "bus.h"
 #include "collection.h"
+#include "wifi_hal.h"
 #include <pthread.h>
 
 #ifdef __cplusplus
@@ -20,12 +21,32 @@ extern "C" {
 #define CSI_CLIENT_MACLIST "Device.WiFi.X_RDK_CSI.%d.ClientMaclist"
 #define CSI_ENABLE_NAME "Device.WiFi.X_RDK_CSI.%d.Enable"
 #define CSI_SUB_DATA "Device.WiFi.X_RDK_CSI.%d.data"
+#define EM_MACLIST_NAME "Device.WiFi.CsiSetMac"
+#define EM_CSI_COVARIANT_DATA "EmCsiCovariant"
+
+#define MAX_CSI_SAMPLES 5
+
+typedef struct {    
+    uint32_t rows;
+    uint32_t cols;
+    wifi_number_t val[MAX_NR][MAX_CSI_SAMPLES];
+} __attribute__((packed)) matrix_r16_t;
+
+typedef matrix_r16_t csi_covariant_data_t;
+
+typedef struct {
+    uint32_t num_samples;
+    uint8_t  cur_csi_elem_index;
+    wifi_csi_data_t csi_elems[MAX_CSI_SAMPLES];
+    csi_covariant_data_t covariant;
+} csi_data_container_t;
 
 typedef struct csi_analytics_data {
     uint32_t num_sc;
     uint32_t decimation;
     uint32_t skip_mismatch_data_num;
     long long int csi_data_capture_time_sec;
+    csi_data_container_t csi_container;
 } csi_analytics_data_t;
 
 typedef struct csi_analytics_info {
@@ -35,6 +56,7 @@ typedef struct csi_analytics_info {
     bool is_csi_capture_enabled;
     pthread_mutex_t maclist_lock;
     char sta_mac[MAX_MACLIST_SIZE];
+    char em_sta_mac[MAX_MACLIST_SIZE];
     int sta_maclist_sched_id;
     int csi_analytics_enable_sched_id;
     hash_map_t *csi_analytics_map;
