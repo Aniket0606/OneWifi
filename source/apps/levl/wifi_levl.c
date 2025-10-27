@@ -626,6 +626,8 @@ int process_levl_csi(wifi_app_t *app, wifi_csi_dev_t *csi_data)
     memcpy(mac_addr, csi_data->sta_mac, sizeof(mac_address_t));
 
     to_mac_str((unsigned char *)mac_addr, mac_str);
+    wifi_util_dbg_print(WIFI_APPS, "%s: test Levl CSI data received - MAC  %02x:%02x:%02x:%02x:%02x:%02x\n",__func__, mac_addr[0], mac_addr[1],
+                                                        mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
     pthread_mutex_lock(&app->data.u.levl.lock);
     if (app->data.u.levl.curr_sounding_mac_map != NULL) {
         if (hash_map_get(app->data.u.levl.curr_sounding_mac_map, mac_str) == NULL) {
