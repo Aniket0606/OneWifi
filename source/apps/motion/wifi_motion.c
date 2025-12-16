@@ -1200,6 +1200,8 @@ bus_error_t eventHandler(char *eventName, bus_event_sub_action_t action, int32_t
             csi_set_interval(interval, csi_session);
             csi_enable_subscription(TRUE, csi_session);
             wifi_util_dbg_print(WIFI_APPS, "Exit %s: Event %s\n", __FUNCTION__, eventName);
+            wifi_util_dbg_print(WIFI_APPS, "%s:%d csi session index:%d and interval:%d\n",
+                __func__, __LINE__, csi_session, interval);
             return bus_error_success;
         }
     }
@@ -1223,7 +1225,9 @@ bus_error_t eventHandler(char *eventName, bus_event_sub_action_t action, int32_t
 
         csi_set_interval(interval, csi_session);
         csi_enable_subscription(TRUE, csi_session);
-        wifi_util_dbg_print(WIFI_APPS, "Exit %s: Event %s\n", __FUNCTION__, eventName);
+        wifi_util_dbg_print(WIFI_APPS, "Exit %s:%d Event %s\n", __FUNCTION__, __LINE__, eventName);
+        wifi_util_dbg_print(WIFI_APPS, "%s:%d csi session index:%d and interval:%d\n",
+            __func__, __LINE__, csi_session, interval);
         return bus_error_success;
     } else {
         wifi_util_dbg_print(WIFI_APPS, "WiFi_Motion_SubscriptionStopped %d\n", csi_session);
