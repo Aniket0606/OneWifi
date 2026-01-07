@@ -32,6 +32,9 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#define _GNU_SOURCE
+#include <unistd.h>
+
 #define UNREFERENCED_PARAMETER(_p_)         (void)(_p_)
 
 const char *wifi_log = "/rdklogs/logs/WiFilog.txt.0";
@@ -1383,6 +1386,26 @@ int hal_event_motion(wifi_app_t *app, wifi_event_subtype_t sub_type, void *data)
     return RETURN_OK;
 }
 
+//@TBD I need to remove this code later
+int can_write_bytes(int fd)
+{
+    int pipe_size;
+                                       
+    pipe_size = fcntl(fd, F_GETPIPE_SZ);
+    if (pipe_size == -1) {
+        perror("fcntl(F_GETPIPE_SZ)");
+        return 0;
+    }
+
+    /*
+     * WARNING:
+     * F_GETPIPE_SZ returns TOTAL pipe capacity,
+     * NOT available/free space.
+     */
+
+    return pipe_size;
+}
+
 int do_pipe_publish(char *buffer, size_t len, csi_session_t *csi)
 {
     char fifo_path[64] = {0};
@@ -1402,10 +1425,12 @@ int do_pipe_publish(char *buffer, size_t len, csi_session_t *csi)
     }
     if (csi->csi_fd > 0)
     {
+        wifi_util_dbg_print(WIFI_APPS,"write cap size:%d, len:%d\r\n", can_write_bytes(csi->csi_fd), len);
         if ((write(csi->csi_fd, buffer, len) < 0)) {
             wifi_util_dbg_print(WIFI_APPS, "%s:%d Messed up write error is %s\n", __func__, __LINE__, strerror(errno));
             return RETURN_ERR;
         }
+        wifi_util_dbg_print(WIFI_APPS,"write cap size:%d\r\n", can_write_bytes(csi->csi_fd));
     }
     return RETURN_OK;
 
