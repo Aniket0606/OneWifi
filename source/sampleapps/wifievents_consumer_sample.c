@@ -104,6 +104,57 @@ int g_rbus_direct_enabled = 0;
 int g_num_of_samples = -1;
 int g_sample_counter = 0;
 
+char g_csi_cfg_clients_mac[256];
+
+long long int get_cur_time_in_sec(void)
+{
+    struct timeval tv_now = { 0 };
+    gettimeofday(&tv_now, NULL);
+
+    return (long long int)tv_now.tv_sec;
+}
+
+bool is_valid_mac(const char *mac)
+{
+    int i;
+
+    if (strlen(mac) != 17)
+        return false;
+
+    for (i = 0; i < 17; i++) {
+        if (((i + 1) % 3 == 0) && (mac[i] != ':')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validate_mac_list(const char *input)
+{
+    char buffer[256];
+    char *token;
+
+    strncpy(buffer, input, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+
+    token = strtok(buffer, ",");
+
+    while (token != NULL) {
+        // Trim leading spaces
+        while (*token == ' ')
+            token++;
+
+        if (!is_valid_mac(token)) {
+            printf("Invalid MAC address found: %s\n", token);
+            return false;
+        }
+
+        token = strtok(NULL, ",");
+    }
+
+    return true;
+}
+
 static void wifievents_get_device_vaps()
 {
     char cmd[200];
@@ -351,6 +402,20 @@ static void csiMacListHandler(rbusHandle_t handle, rbusEvent_t const *event,
     UNREFERENCED_PARAMETER(handle);
 }
 
+static inline void convert_re_and_im(uint32_t per_tone_data_32bit, double *real, double *img)
+{
+    uint16_t real_u = per_tone_data_32bit & 0xFFFF;
+    uint16_t imag_u = (per_tone_data_32bit >> 16) & 0xFFFF;
+
+    // Convert unsigned to signed 16-bit (two's complement)
+    int16_t real_s = (real_u >= 0x8000) ? (int16_t)(real_u - 0x10000) : (int16_t)real_u;
+    int16_t imag_s = (imag_u >= 0x8000) ? (int16_t)(imag_u - 0x10000) : (int16_t)imag_u;
+
+    // Convert S9.6 fixed-point to float by dividing by 64
+    *real = real_s / 64.0f;
+    *img = imag_s / 64.0f;
+}
+
 void json_add_wifi_csi_frame_info(cJSON *sta_obj, wifi_frame_info_t *frame_info)
 {
     cJSON *obj_array, *number_item;
@@ -413,11 +478,16 @@ void json_add_wifi_csi_matrix_info(cJSON *csi_matrix_obj_wrapper, wifi_csi_data_
                 cJSON *real_imag_object = cJSON_CreateObject();
                 VERIFY_NULL_CHECK(real_imag_object);
 
+#if 0
                 int16_t real_data = (int16_t)((csi->csi_matrix[sc_idx][ant_idx][stream_idx] >> 16) &
                     0xFFFF);
                 int16_t imag_data = (int16_t)(csi->csi_matrix[sc_idx][ant_idx][stream_idx] &
                     0xFFFF);
-
+#else
+                double real_data = 0.0, imag_data = 0.0;
+                convert_re_and_im(csi->csi_matrix[sc_idx][ant_idx][stream_idx],
+                    &real_data, &imag_data);
+#endif
                 cJSON_AddNumberToObject(real_imag_object, "real", real_data);
                 cJSON_AddNumberToObject(real_imag_object, "img", imag_data);
 
@@ -445,6 +515,25 @@ void client_csi_data_json_elem_add(cJSON *sta_obj, wifi_csi_data_t *csi,
     json_add_wifi_csi_matrix_info(obj, csi);
 }
 
+int get_csi_data_interval(void)
+{
+    if (g_csi_interval) {
+        return g_csi_interval;
+    } else {
+        return DEFAULT_CSI_INTERVAL;
+    }
+}
+
+void add_or_update_number(cJSON *obj, const char *key, double value)
+{
+    cJSON *item = cJSON_GetObjectItem(obj, key);
+    if (item == NULL) {
+        cJSON_AddNumberToObject(obj, key, value);
+    } else {
+        item->valuedouble = value;
+    }
+}
+
 void csi_data_in_json_format(mac_address_t sta_mac, wifi_csi_data_t *csi)
 {
     if (g_num_of_samples == -1) {
@@ -464,6 +553,9 @@ void csi_data_in_json_format(mac_address_t sta_mac, wifi_csi_data_t *csi)
         VERIFY_NULL_CHECK(p_csi_json_obj->json_csi_obj);
         cJSON_AddItemToObject(p_csi_json_obj->main_json_obj, "CSI", p_csi_json_obj->json_csi_obj);
     }
+
+    add_or_update_number(p_csi_json_obj->json_csi_obj, "csi_sampling_interval_ms",
+        get_csi_data_interval());
 
     if (p_csi_json_obj->json_sounding_devices == NULL) {
         p_csi_json_obj->json_sounding_devices = cJSON_CreateArray();
@@ -512,9 +604,14 @@ void save_json_data_to_file(void)
             return;
         }
 
-        p_csi_json_obj->json_dump_fptr = fopen("/tmp/csi_samples.json", "a+");
+        char file_name[64] = { 0 };
+        long long int timestamp = get_cur_time_in_sec();
+
+        snprintf(file_name, sizeof(file_name), "/tmp/csi_samples_%llu.json", timestamp);
+
+        p_csi_json_obj->json_dump_fptr = fopen(file_name, "a+");
         if (p_csi_json_obj->json_dump_fptr == NULL) {
-            printf("%s Failed to open file\n", __func__);
+            printf("%s Failed to open file:%s\n", __func__, file_name);
             goto file_error;
         }
 
@@ -914,7 +1011,7 @@ static bool parseArguments(int argc, char **argv)
     bool ret = true;
     char *p;
 
-    while ((c = getopt(argc, argv, "he:s:v:i:c:f:n:")) != -1) {
+    while ((c = getopt(argc, argv, "he:s:v:i:c:f:n:m:")) != -1) {
         switch (c) {
         case 'h':
             printf("HELP :  wifi_events_consumer -e [numbers] - default all events\n"
@@ -935,6 +1032,7 @@ static bool parseArguments(int argc, char **argv)
                    "-c [client diag interval] - default %dms\n"
                    "-f [debug file name] - default /tmp/wifiEventConsumer\n"
                    "-n [number of samples]"
+                   "-m [All client MAC addresses separated by commas]"
                    "Example: wifi_events_consumer -e 1,2,3,7 -s 1 -v 1,2,13,14\n"
                    "touch /nvram/wifiEventsAppCSILogDisable to disable CSI detail log\n"
                    "touch /nvram/wifiEventsAppCSIRBUSDirect to enable RBUS Direct for CSI data\n",
@@ -991,6 +1089,13 @@ static bool parseArguments(int argc, char **argv)
             g_num_of_samples = atoi(optarg);
             printf(" number of samples to be collected : %d\n", g_num_of_samples);
             break;
+        case 'm':
+            if (!optarg || !validate_mac_list(optarg)) {
+                printf("%s:%d Failed to parse csi mac list:%s\n", __func__, __LINE__, optarg);
+                ret = false;
+            }
+            snprintf(g_csi_cfg_clients_mac, sizeof(g_csi_cfg_clients_mac), "%s", optarg);
+            break;
         case '?':
             printf("Supposed to get an argument for this option or invalid option\n");
             exit(0);
@@ -1044,6 +1149,48 @@ static void termSignalHandler(int sig)
     }
 
     exit(0);
+}
+
+int set_rbus_csi_sta_maclist(rbusHandle_t bus_handle, int csi_session_index, char *sta_mac)
+{
+    char name[64] = { 0 };
+    int rc = RBUS_ERROR_SUCCESS;
+
+    snprintf(name, sizeof(name), "Device.WiFi.X_RDK_CSI.%d.ClientMaclist", csi_session_index);
+
+    rc = rbus_setStr(bus_handle, name, sta_mac);
+    if (rc != RBUS_ERROR_SUCCESS) {
+        printf("%s:%d: bus:%s bus set string:%s Failed %d\n", __func__,
+            __LINE__, name, sta_mac, rc);
+        return RETURN_ERR;
+    } else {
+        printf("%s:%d: bus:%s bus set string:%s success\n", __func__,
+            __LINE__, name, sta_mac);
+    }
+
+    return rc;
+}
+
+rbusError_t rbus_set_bool_value(rbusHandle_t p_rbus_handle, int csi_session_index, bool bool_value)
+{
+    char name[64] = { 0 };
+    rbusError_t rc = RBUS_ERROR_SUCCESS;
+    rbusValue_t value;
+
+    rbusValue_Init(&value);
+
+    rbusValue_SetBoolean(value, bool_value);
+
+    snprintf(name, sizeof(name), "Device.WiFi.X_RDK_CSI.%d.Enable", csi_session_index);
+
+    rc = rbus_set(p_rbus_handle, name, value, NULL);
+    if (rc != RBUS_ERROR_SUCCESS) {
+        printf("%s:%d bus: rbus_set() failed:%d for name:%s\n",
+          __func__, __LINE__, rc, name);
+    }
+    rbusValue_Release(value);
+
+    return rc;
 }
 
 int main(int argc, char *argv[])
@@ -1126,6 +1273,12 @@ int main(int argc, char *argv[])
         if (rc != RBUS_ERROR_SUCCESS) {
             printf("Failed to add CSI\n");
             goto exit;
+        }
+        if (strlen(g_csi_cfg_clients_mac) != 0) {
+            usleep(500 * 1000);
+            set_rbus_csi_sta_maclist(g_handle, g_csi_index, g_csi_cfg_clients_mac);
+            usleep(500 * 1000);
+            rbus_set_bool_value(g_handle, g_csi_index, true);
         }
     }
 
