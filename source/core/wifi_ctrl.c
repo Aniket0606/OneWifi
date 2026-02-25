@@ -1859,6 +1859,8 @@ int start_wifi_ctrl(wifi_ctrl_t *ctrl)
         wifi_util_error_print(WIFI_CTRL,"%s:%d Failed to start Wifi Monitor\n", __func__, __LINE__);
     }
 
+    multicast_listener_start();
+
 #ifdef ONEWIFI_ANALYTICS_APP_SUPPORT
     apps_mgr_analytics_event(&ctrl->apps_mgr, wifi_event_type_exec, wifi_event_exec_start, NULL);
 #endif
