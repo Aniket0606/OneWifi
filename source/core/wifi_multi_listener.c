@@ -13,6 +13,8 @@
 
 #include <cjson/cJSON.h>
 
+#include "wifi_util.h"
+
 #define MULTICAST_GROUP "225.0.0.50"
 #define PORT 12575
 #define BUFFER_SIZE 16 * 1024
