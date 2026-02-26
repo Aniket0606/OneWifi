@@ -111,6 +111,7 @@ typedef struct {
     bss_candidate_list_t   candidates_list;
     bss_candidate_t        last_connected_bss;
     bss_candidate_t        new_bss;
+    bool                   new_bss_delayed;
     connection_state_t     conn_state;
     bool                   is_radio_ignored;
     bool                   is_on_channel;
@@ -122,6 +123,7 @@ typedef struct {
     unsigned char          disconn_retry;
     unsigned char          wait_scan_result;
     unsigned char          scanned_radios;
+    unsigned char          new_bss_scan_retry;
     unsigned int           go_to_channel;
     unsigned int           go_to_channel_width;
     unsigned int           channel_change_pending_map;
