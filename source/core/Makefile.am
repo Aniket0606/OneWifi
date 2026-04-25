@@ -251,6 +251,7 @@ endif
 OneWifi_LDFLAGS += -lwifi_webconfig 
 OneWifi_LDFLAGS += -lwifi_bus
 if WIFI_SENSING_APP_SUPPORT
+OneWifi_LDFLAGS += -L${STAGING_LIBDIR}
 OneWifi_LDFLAGS += -ltensorflowlite_c
 endif
 #OneWifi_LDFLAGS += -llibnl-3.la llibnl-genl-3.la llibnl-route-3.la llibnl-nf-3.la llibnl-idiag-3
