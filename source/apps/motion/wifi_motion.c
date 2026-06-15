@@ -215,7 +215,7 @@ static csi_session_t* csi_get_session(bool create, int csi_session_number) {
     csi->csi_sess_number = csi_session_number;
     csi->enable = FALSE;
     csi->subscribed = FALSE;
-    csi->stream = FALSE;
+    csi->stream = WIFI_CSI_STREAM_MODE_OFF;
     csi->csi_fd = -1;
 
     //Create FIFO fr the session.
@@ -819,6 +819,10 @@ bus_error_t csi_set_handler(char *event_name, raw_data_t *p_data, bus_user_data_
                 mac_address_t l_client_list[MAX_NUM_CSI_CLIENTS];
                 memset(l_client_list, 0, MAX_NUM_CSI_CLIENTS*sizeof(mac_address_t));
 
+                wifi_util_info_print(WIFI_APPS,
+                    "%s:%d CSI ClientMaclist set request session:%u input:'%s'\n",
+                    __func__, __LINE__, idx, pTmp);
+
                 str_dup = strdup(pTmp);
                 if (str_dup == NULL) {
                     wifi_util_error_print(WIFI_APPS,"%s:%d strdup failed\n", __func__, __LINE__);
@@ -840,6 +844,9 @@ bus_error_t csi_set_handler(char *event_name, raw_data_t *p_data, bus_user_data_
                         return bus_error_general;
                     }
                 }
+                wifi_util_info_print(WIFI_APPS,
+                    "%s:%d CSI ClientMaclist parsed session:%u parsed_count:%u\n",
+                    __func__, __LINE__, idx, itr);
                 if (memcmp(csi_data->csi_client_list, l_client_list,  MAX_NUM_CSI_CLIENTS*sizeof(mac_address_t)) != 0) {
                     //check new configuration did not exceed the max number of csi clients
                     num_unique_mac = 0;
@@ -889,21 +896,40 @@ bus_error_t csi_set_handler(char *event_name, raw_data_t *p_data, bus_user_data_
                 }
             }
         } else if (strcmp(parameter, "Stream") == 0) {
-            bool stream_val;
+            uint32_t stream_mode;
 
-            if (p_data->data_type != bus_data_type_boolean) {
+            if (p_data->data_type != bus_data_type_uint32) {
                 wifi_util_error_print(WIFI_CTRL,"%s:%d '%s' wrong bus data_type:%02x\n",
                    __func__, __LINE__, name, p_data->data_type);
                 queue_destroy(local_csi_queue);
                 return bus_error_invalid_input;
-            } else {
-                stream_val = p_data->raw_data.b;
-                if (stream_val != csi_data->stream) {
-                    csi_data->stream = stream_val;
-                    apply = true;
-                }
             }
-        } else if (strcmp(parameter, "Enable") == 0) {
+
+            stream_mode = p_data->raw_data.u32;
+            wifi_util_info_print(WIFI_APPS,
+                "%s:%d CSI Stream set request session:%u current:%u requested:%u\n",
+                __func__, __LINE__, idx, csi_data->stream, stream_mode);
+
+            if (stream_mode > WIFI_CSI_STREAM_MODE_LIVE) {
+                wifi_util_error_print(WIFI_CTRL,
+                    "%s:%d '%s' invalid stream mode:%u expected 0/1/2\n",
+                    __func__, __LINE__, name, stream_mode);
+                queue_destroy(local_csi_queue);
+                return bus_error_invalid_input;
+            }
+
+            if (stream_mode != csi_data->stream) {
+                csi_data->stream = stream_mode;
+                wifi_util_info_print(WIFI_APPS,
+                    "%s:%d CSI Stream applied session:%u new:%u\n",
+                    __func__, __LINE__, idx, csi_data->stream);
+                apply = true;
+            } else {
+                wifi_util_dbg_print(WIFI_APPS,
+                    "%s:%d CSI Stream unchanged session:%u value:%u\n",
+                    __func__, __LINE__, idx, csi_data->stream);
+            }
+	} else if (strcmp(parameter, "Enable") == 0) {
             bool enabled;
 
             if (p_data->data_type != bus_data_type_boolean) {
@@ -1015,16 +1041,33 @@ bus_error_t csi_get_handler(char *event_name, raw_data_t *p_data, bus_user_data_
             memset(tmp_cli_list, 0, sizeof(tmp_cli_list));
             if (csi_data->csi_client_count > 0) {
                 for (itr=0; itr<csi_data->csi_client_count; itr++) {
+                    size_t used_len;
+                    size_t rem_len;
+
                     snprintf(mac_str, sizeof(mac_str), "%02x%02x%02x%02x%02x%02x",
                             csi_data->csi_client_list[itr][0], csi_data->csi_client_list[itr][1],
                             csi_data->csi_client_list[itr][2], csi_data->csi_client_list[itr][3],
                             csi_data->csi_client_list[itr][4], csi_data->csi_client_list[itr][5]);
-                    strncat(tmp_cli_list, mac_str, strlen(tmp_cli_list)-1);
-                    strncat(tmp_cli_list, ",", strlen(tmp_cli_list)-1);
+
+                    used_len = strlen(tmp_cli_list);
+                    rem_len = (sizeof(tmp_cli_list) > used_len) ? (sizeof(tmp_cli_list) - used_len - 1) : 0;
+                    if (rem_len > 0) {
+                        strncat(tmp_cli_list, mac_str, rem_len);
+                    }
+
+                    used_len = strlen(tmp_cli_list);
+                    rem_len = (sizeof(tmp_cli_list) > used_len) ? (sizeof(tmp_cli_list) - used_len - 1) : 0;
+                    if (rem_len > 0) {
+                        strncat(tmp_cli_list, ",", rem_len);
+                    }
                 }
                 int len  = strlen(tmp_cli_list);
                 tmp_cli_list[len-1] = '\0';
             }
+
+            wifi_util_info_print(WIFI_APPS,
+                "%s:%d CSI ClientMaclist get session:%u client_count:%u value:'%s'\n",
+                __func__, __LINE__, idx, csi_data->csi_client_count, tmp_cli_list);
 
             uint32_t str_len = strlen(tmp_cli_list) + 1;
             p_data->data_type = bus_data_type_string;
@@ -1042,7 +1085,7 @@ bus_error_t csi_get_handler(char *event_name, raw_data_t *p_data, bus_user_data_
             p_data->raw_data.b = csi_data->enabled;
             return status;
         } else if (strcmp(parameter, "Stream") == 0) {
-            p_data->data_type = bus_data_type_boolean;
+            p_data->data_type = bus_data_type_uint32;
             p_data->raw_data.b = csi_data->stream;
             return status;
         }
@@ -1439,10 +1482,14 @@ int do_pipe_publish(char *buffer, size_t len, csi_session_t *csi)
             return RETURN_ERR;
         }
     }
-    if (csi->csi_fd > 0)
-    {
-        if ((write(csi->csi_fd, buffer, len) < 0)) {
-            wifi_util_dbg_print(WIFI_APPS, "%s:%d Messed up write error is %s\n", __func__, __LINE__, strerror(errno));
+    if (csi->csi_fd > 0) {
+        ssize_t n = write(csi->csi_fd, buffer, len);
+        if (n < 0) {
+            int err = errno;
+            wifi_util_dbg_print(WIFI_APPS,
+                "%s:%d pipe write failed sess:%d fd:%d errno:%d(%s)\n",
+                __func__, __LINE__, csi->csi_sess_number, csi->csi_fd,
+                err, strerror(err));
             return RETURN_ERR;
         }
     }
@@ -1733,7 +1780,9 @@ int motion_stop_fn(void* wifi_app, unsigned int ap_index, mac_addr_t mac_addr, i
 #ifdef ONEWIFI_MOTION_APP_SUPPORT
 static void pipeSignalHandler(int sig)
 {
+    (void)sig;
     wifi_util_info_print(WIFI_APPS, "%s:%d Caught SIGPIPE\n", __func__, __LINE__);
+
     int count = 0;
     int itr = 0;
     char fifo_path[64] = {0};
@@ -1744,12 +1793,14 @@ static void pipeSignalHandler(int sig)
         wifi_util_error_print(WIFI_APPS, "%s:%d: NULL Pointer Unable to delete session\n", __func__, __LINE__);
         return;
     }
+
     count = queue_count(csi_queue);
-    for(itr=0; itr<count; itr++) {
+    for (itr = 0; itr < count; itr++) {
         csi = queue_peek(csi_queue, itr);
-        if (csi ==  NULL) {
+        if (csi == NULL) {
             continue;
         }
+
         snprintf(fifo_path, sizeof(fifo_path), "/tmp/csi_motion_pipe%d", csi->csi_sess_number);
         if (csi->csi_fd > 0) {
             close(csi->csi_fd);
@@ -1757,7 +1808,6 @@ static void pipeSignalHandler(int sig)
             unlink(fifo_path);
         }
     }
-
 }
 
 int motion_init(wifi_app_t *app, unsigned int create_flag)
@@ -1781,7 +1831,7 @@ int motion_init(wifi_app_t *app, unsigned int create_flag)
             { bus_data_type_boolean, true, 0, 0, 0, NULL } },
         { WIFI_CSI_STREAM, bus_element_type_property,
             { csi_get_handler, csi_set_handler, NULL, NULL, NULL, NULL}, slow_speed, ZERO_TABLE,
-            { bus_data_type_boolean, true, 0, 0, 0, NULL } },
+            { bus_data_type_uint32, true, 0, 0, 0, NULL } },
         { WIFI_CSI_NUMBEROFENTRIES, bus_element_type_property,
             { csi_get_handler, NULL, NULL, NULL, NULL, NULL}, slow_speed, ZERO_TABLE,
             { bus_data_type_uint32, true, 0, 0, 0, NULL } }

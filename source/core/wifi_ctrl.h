@@ -305,7 +305,7 @@ typedef struct{
 typedef struct {
     unsigned long csi_session_num;
     bool enabled;
-    bool stream;
+    uint32_t stream;
     unsigned int csi_client_count;
     mac_address_t csi_client_list[CSI_CLIENT_PER_SESSION];
 } csi_data_t;

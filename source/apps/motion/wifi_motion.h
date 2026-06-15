@@ -20,6 +20,7 @@
 #ifndef WIFI_MOTION_H
 #define WIFI_MOTION_H
 
+#include <stdint.h>
 #include "wifi_csi.h"
 #include "bus.h"
 
@@ -49,7 +50,7 @@ typedef struct {
 typedef struct {
     bool enable;
     bool subscribed;
-    bool stream;
+    uint32_t stream;
     bool mac_is_connected[MAX_CSI_CLIENTS_PER_SESSION];
     int  csi_time_interval;
     int  no_of_mac;

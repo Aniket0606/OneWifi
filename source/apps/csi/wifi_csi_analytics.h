@@ -53,7 +53,7 @@ typedef struct csi_analytics_info {
     bool is_read_oper_thread_enabled;
     uint32_t csi_session_index;
     bool is_csi_capture_enabled;
-    bool stream;
+    uint32_t stream;
     pthread_mutex_t maclist_lock;
     char sta_mac[MAX_MACLIST_SIZE];
     int sta_maclist_sched_id;

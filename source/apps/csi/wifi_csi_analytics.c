@@ -258,9 +258,9 @@ static int webconfig_hal_csi_data_apply(wifi_app_t *apps, webconfig_subdoc_decod
 
     total_session = queue_count(new_config);
 
-    /* Reset stream flag before scanning; will be set true if any enabled
-     * external session requests streaming. */
-    csi_info->stream = false;
+    /* Reset stream mode before scanning; keep the highest requested mode
+     * from enabled external sessions (off < file < live). */
+    csi_info->stream = WIFI_CSI_STREAM_MODE_OFF;
 
     for (index = 0; index < total_session; index++) {
         new_csi_data = (csi_data_t *)queue_peek(new_config, index);
@@ -277,9 +277,9 @@ static int webconfig_hal_csi_data_apply(wifi_app_t *apps, webconfig_subdoc_decod
                     __func__, __LINE__, new_csi_data->csi_session_num);
             } else {
                 /* Collect MACs from all enabled external sessions.
-                 * Also inherit stream=true if any such session requests it. */
-                if (new_csi_data->stream) {
-                    csi_info->stream = true;
+                 * Also inherit the highest stream mode across sessions. */
+                if (new_csi_data->stream > csi_info->stream) {
+                    csi_info->stream = new_csi_data->stream;
                 }
                 for (s_index = 0; s_index < new_csi_data->csi_client_count; s_index++) {
                     memset(mac_str, 0, MAX_MAC_STR_SIZE);
@@ -292,7 +292,7 @@ static int webconfig_hal_csi_data_apply(wifi_app_t *apps, webconfig_subdoc_decod
         }
     }
 
-    wifi_util_info_print(WIFI_APPS, "%s:%d csi stream:%d\n", __func__, __LINE__,
+    wifi_util_info_print(WIFI_APPS, "%s:%d csi stream:%u\n", __func__, __LINE__,
         csi_info->stream);
 
     update_mac_list(apps, total_str_mac);
